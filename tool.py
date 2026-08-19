@@ -1341,6 +1341,12 @@ class MainWindow(QMainWindow):
         self.update_initial_stats()
 
 if __name__ == "__main__":
+    if "--auto-run" in sys.argv:
+        # Chạy trên VPS/GitHub Actions không có màn hình hiển thị trực tiếp
+        # Gán biến môi trường offscreen để PyQt5 không bị crash, 
+        # CÒN Playwright MỞ MICROSOFT EDGE VẪN SẼ CÓ MÀN HÌNH THỰC TẾ ĐỂ BYPASS CLOUDFLARE
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
