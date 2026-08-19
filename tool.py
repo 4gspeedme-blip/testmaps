@@ -1342,12 +1342,27 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     if "--auto-run" in sys.argv:
-        # Chạy trên VPS/GitHub Actions không có màn hình hiển thị trực tiếp
-        # Gán biến môi trường offscreen để PyQt5 không bị crash, 
-        # CÒN Playwright MỞ MICROSOFT EDGE VẪN SẼ CÓ MÀN HÌNH THỰC TẾ ĐỂ BYPASS CLOUDFLARE
-        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        from PyQt5.QtCore import QCoreApplication
+        app = QCoreApplication(sys.argv)
         
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec_())
+        writer_thread = DatabaseWriterThread()
+        writer_thread.log_signal.connect(lambda msg: print(msg, flush=True))
+        writer_thread.start()
+
+        worker_1 = Step1HunterWorker()
+        worker_1.log_signal.connect(lambda msg: print(msg, flush=True))
+        worker_1.start()
+
+        worker_2 = Step2LiveCrawlerWorker(writer_thread)
+        worker_2.log_signal.connect(lambda msg: print(msg, flush=True))
+        worker_2.start()
+        
+        print(">>> Hệ thống bắt đầu chạy Auto-Run (No GUI) trên MySQL...", flush=True)
+        
+        QTimer.singleShot(17400000, lambda: sys.exit(0))
+        sys.exit(app.exec_())
+    else:
+        app = QApplication(sys.argv)
+        window = MainWindow()
+        window.show()
+        sys.exit(app.exec_())
