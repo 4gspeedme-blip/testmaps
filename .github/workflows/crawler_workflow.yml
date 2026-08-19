@@ -3,7 +3,7 @@ name: 24/7 Crawler (3 VPS)
 on:
   schedule:
     # Chạy mỗi 5 giờ
-    - cron: '0 */5 * * *'
+    - cron: '0 */1 * * *'
   workflow_dispatch: # Cho phép bấm chạy thủ công
 
 jobs:
