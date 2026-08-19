@@ -1341,6 +1341,12 @@ class MainWindow(QMainWindow):
         self.update_initial_stats()
 
 if __name__ == "__main__":
+    import sys
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8')
+
     if "--auto-run" in sys.argv:
         from PyQt5.QtCore import QCoreApplication
         app = QCoreApplication(sys.argv)
