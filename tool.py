@@ -707,15 +707,15 @@ class Step2LiveCrawlerWorker(QThread):
                 )
                 page = context.new_page()
                 page.goto(BASE, timeout=15000)
-                self.log_signal.emit("🌐 [Cloudflare Bypass] Đang chờ ở trang chủ 8 giây...")
-                time.sleep(8)
+                self.log_signal.emit("🌐 [Cloudflare Bypass] Đang chờ ở trang chủ 15 giây...")
+                time.sleep(15)
                 browser.close()
                 self.log_signal.emit("✅ [Cloudflare Bypass] Đã đóng trình duyệt, IP an toàn, cào tiếp!")
         except Exception as e:
             self.log_signal.emit(f"❌ [Cloudflare Bypass] Lỗi: {e}")
 
     def run(self):
-        self.log_signal.emit("[Bước 2] 🚀 Tiến trình cào chi tiết chuẩn sát 1s/company khởi chạy...")
+        self.log_signal.emit("[Bước 2] 🚀 Tiến trình cào chi tiết chuẩn sát 3s/company khởi chạy...")
         total_db = get_mysql_companies_count()
         self.count_signal.emit(total_db)
         
@@ -824,7 +824,7 @@ class Step2LiveCrawlerWorker(QThread):
                         time.sleep(1.0)
 
                 if success:
-                    time.sleep(1.0)
+                    time.sleep(3.0)
 
     def stop(self): self.is_running = False
 
