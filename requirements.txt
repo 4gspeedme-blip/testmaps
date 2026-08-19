@@ -1,0 +1,7 @@
+pymysql
+requests
+beautifulsoup4
+lxml
+playwright
+playwright-stealth
+openai
