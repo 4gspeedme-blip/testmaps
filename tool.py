@@ -12,6 +12,11 @@ from queue import Queue
 import requests
 from collections import deque
 from bs4 import BeautifulSoup
+
+# Fix UnicodeEncodeError trên môi trường Windows của Github Actions
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 from urllib.parse import urljoin, urlparse, urldefrag
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer, QUrl
 from PyQt5.QtWidgets import (
@@ -578,7 +583,6 @@ class Step1HunterWorker(QThread):
 
     def run(self):
         self.log_signal.emit("[Bước 1] 🕷️ Bắt đầu tiến trình Nhện Săn Link thông minh (Cào & tỏa link lặp vô hạn)...")
-        
         seeds = [
             BASE,
             "https://masothue.com/tra-cuu-ma-so-thue-theo-tinh",
@@ -586,95 +590,111 @@ class Step1HunterWorker(QThread):
         ]
         save_urls_batch_to_mysql(seeds, "PENDING")
 
-        while self.is_running:
-            target_url = None
-            try:
-                conn = get_mysql_connection()
-                cursor = conn.cursor()
-                
-                worker_id = "L_" + uuid.uuid4().hex[:8]
-                # Ưu tiên lấy link PENDING điều hướng (không chứa MST 10 chữ số)
-                cursor.execute("UPDATE crawler_urls SET status = %s WHERE status = 'PENDING' AND url NOT REGEXP '/[0-9]{10}' LIMIT 1", (worker_id,))
-                cursor.execute("SELECT url FROM crawler_urls WHERE status = %s LIMIT 1", (worker_id,))
-                row = cursor.fetchone()
-                
-                # Nếu hết link điều hướng, lấy bất kỳ link PENDING nào
-                if not row:
-                    cursor.execute("UPDATE crawler_urls SET status = %s WHERE status = 'PENDING' LIMIT 1", (worker_id,))
-                    cursor.execute("SELECT url FROM crawler_urls WHERE status = %s LIMIT 1", (worker_id,))
-                    row = cursor.fetchone()
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(channel="msedge", headless=False, args=["--disable-blink-features=AutomationControlled", "--no-first-run"])
+                context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edge/122.0.0.0")
+                page = context.new_page()
 
-                if row:
-                    target_url = row[0]
-                    cursor.execute("UPDATE crawler_urls SET status = 'VISITED' WHERE url = %s", (target_url,))
-
-                cursor.close()
-                conn.close()
-            except Exception as e:
-                self.log_signal.emit(f"⚠️ Nhện săn link lỗi kết nối MySQL: {e}")
-                time.sleep(3)
-                continue
-
-            if not target_url:
-                self.log_signal.emit("⏳ [Nhện] Hàng đợi link điều hướng PENDING trống. Đang nạp lại seed URLs & xoay vòng link điều hướng...")
-                save_urls_batch_to_mysql(seeds, "PENDING")
-                
-                try:
-                    conn = get_mysql_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        UPDATE crawler_urls 
-                        SET status = 'PENDING' 
-                        WHERE status = 'VISITED' 
-                        AND url NOT REGEXP '/[0-9]{10}'
-                        ORDER BY updated_at ASC
-                        LIMIT 30
-                    """)
-                    cursor.close()
-                    conn.close()
-                except Exception:
-                    pass
-
-                for _ in range(6):
-                    if not self.is_running: break
-                    time.sleep(0.5)
-                continue
-
-            norm_url = normalize(target_url)
-            self.log_signal.emit(f"🔍 [Nhện đang cào & tỏa link từ trang]: {norm_url}")
-            
-            content = fetch_url_content_safe(norm_url, self.log_signal)
-            if content and len(content) > 300:
-                try:
-                    soup = BeautifulSoup(content, "lxml")
-                    a_tags = soup.find_all("a", href=True)
-                    
-                    found_links = set()
-                    mst_links_count = 0
-                    nav_links_count = 0
-
-                    for a_tag in a_tags:
-                        href = a_tag['href']
-                        link = urljoin(norm_url, href)
-                        norm_link = normalize(link)
+                while self.is_running:
+                    target_url = None
+                    try:
+                        conn = get_mysql_connection()
+                        cursor = conn.cursor()
                         
-                        if is_internal_domain(norm_link) and "Search?q=" not in norm_link and not any(norm_link.lower().endswith(ext) for ext in ['.jpg', '.png', '.css', '.js', '.pdf', '.ico', '.zip', '.svg', '.woff', '.woff2']):
-                            found_links.add(norm_link)
-                            if re.search(r'/[0-9]{10}', norm_link):
-                                mst_links_count += 1
-                            else:
-                                nav_links_count += 1
-                    
-                    if found_links:
-                        save_urls_batch_to_mysql(list(found_links), "PENDING")
-                        self.log_signal.emit(f"   🎯 Đã bóc tách & đẩy ngay {len(found_links)} link ({nav_links_count} điều hướng | {mst_links_count} doanh nghiệp) lên MySQL (loại trùng lặp)!")
-                    else:
-                        self.log_signal.emit(f"   ⚠️ Không tìm thấy link mới tại {norm_url}")
-                except Exception as ex:
-                    self.log_signal.emit(f"⚠️ Lỗi bóc tách link tại {norm_url}: {ex}")
+                        worker_id = "L_" + uuid.uuid4().hex[:8]
+                        cursor.execute("UPDATE crawler_urls SET status = %s WHERE status = 'PENDING' AND url NOT REGEXP '/[0-9]{10}' LIMIT 1", (worker_id,))
+                        cursor.execute("SELECT url FROM crawler_urls WHERE status = %s LIMIT 1", (worker_id,))
+                        row = cursor.fetchone()
+                        
+                        if not row:
+                            cursor.execute("UPDATE crawler_urls SET status = %s WHERE status = 'PENDING' LIMIT 1", (worker_id,))
+                            cursor.execute("SELECT url FROM crawler_urls WHERE status = %s LIMIT 1", (worker_id,))
+                            row = cursor.fetchone()
 
-            # Đặt độ trễ 2.0 giây cho nhện săn link để ưu tiên băng thông & log cho luồng cào chi tiết DN
-            time.sleep(2.0)
+                        if row:
+                            target_url = row[0]
+                            cursor.execute("UPDATE crawler_urls SET status = 'VISITED' WHERE url = %s", (target_url,))
+
+                        cursor.close()
+                        conn.close()
+                    except Exception as e:
+                        self.log_signal.emit(f"⚠️ Nhện săn link lỗi kết nối MySQL: {e}")
+                        time.sleep(3)
+                        continue
+
+                    if not target_url:
+                        self.log_signal.emit("⏳ [Nhện] Hàng đợi link điều hướng PENDING trống. Đang nạp lại seed URLs & xoay vòng link điều hướng...")
+                        save_urls_batch_to_mysql(seeds, "PENDING")
+                        
+                        try:
+                            conn = get_mysql_connection()
+                            cursor = conn.cursor()
+                            cursor.execute("""
+                                UPDATE crawler_urls 
+                                SET status = 'PENDING' 
+                                WHERE status = 'VISITED' 
+                                AND url NOT REGEXP '/[0-9]{10}'
+                                ORDER BY updated_at ASC
+                                LIMIT 30
+                            """)
+                            cursor.close()
+                            conn.close()
+                        except Exception:
+                            pass
+
+                        for _ in range(6):
+                            if not self.is_running: break
+                            time.sleep(0.5)
+                        continue
+
+                    norm_url = normalize(target_url)
+                    self.log_signal.emit(f"🔍 [Nhện đang cào & tỏa link từ trang]: {norm_url}")
+                    
+                    try:
+                        page.goto(norm_url, timeout=30000)
+                        content = page.content()
+                        if "Just a moment..." in content:
+                            self.log_signal.emit("⏳ [Nhện] Phát hiện Cloudflare, đang chờ 15s để tự vượt...")
+                            time.sleep(15)
+                            content = page.content()
+                    except Exception as e:
+                        self.log_signal.emit(f"⚠️ Nhện lỗi truy cập {norm_url}: {e}")
+                        content = None
+                        
+                    if content and len(content) > 300:
+                        try:
+                            soup = BeautifulSoup(content, "lxml")
+                            a_tags = soup.find_all("a", href=True)
+                            
+                            found_links = set()
+                            mst_links_count = 0
+                            nav_links_count = 0
+
+                            for a_tag in a_tags:
+                                href = a_tag['href']
+                                link = urljoin(norm_url, href)
+                                norm_link = normalize(link)
+                                
+                                if is_internal_domain(norm_link) and "Search?q=" not in norm_link and not any(norm_link.lower().endswith(ext) for ext in ['.jpg', '.png', '.css', '.js', '.pdf', '.ico', '.zip', '.svg', '.woff', '.woff2']):
+                                    found_links.add(norm_link)
+                                    if re.search(r'/[0-9]{10}', norm_link):
+                                        mst_links_count += 1
+                                    else:
+                                        nav_links_count += 1
+                                        
+                            if found_links:
+                                save_urls_batch_to_mysql(list(found_links), "PENDING")
+                                self.log_signal.emit(f"   🎯 Đã bóc tách & đẩy ngay {len(found_links)} link ({nav_links_count} điều hướng | {mst_links_count} doanh nghiệp) lên MySQL (loại trùng lặp)!")
+                            else:
+                                self.log_signal.emit(f"   ⚠️ Không tìm thấy link mới tại {norm_url}")
+                        except Exception as ex:
+                            self.log_signal.emit(f"⚠️ Lỗi bóc tách link tại {norm_url}: {ex}")
+
+                    time.sleep(2.0)
+
+        except Exception as e:
+            self.log_signal.emit(f"❌ [Nhện] Lỗi Playwright: {e}")
 
     def stop(self): self.is_running = False
 
@@ -688,147 +708,134 @@ class Step2LiveCrawlerWorker(QThread):
         self.writer_thread = writer_thread
         self.crawled_count = 0
 
-    def bypass_cloudflare(self):
-        if not HAS_PLAYWRIGHT: return
-        self.log_signal.emit("🛡️ [Cloudflare Bypass] Mở trình duyệt giả lập để qua mặt Bot Check...")
-        try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    channel="msedge",
-                    headless=False,
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--no-first-run",
-                        "--no-default-browser-check",
-                    ]
-                )
-                context = browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edge/122.0.0.0"
-                )
-                page = context.new_page()
-                page.goto(BASE, timeout=15000)
-                self.log_signal.emit("🌐 [Cloudflare Bypass] Đang chờ ở trang chủ 15 giây...")
-                time.sleep(15)
-                browser.close()
-                self.log_signal.emit("✅ [Cloudflare Bypass] Đã đóng trình duyệt, IP an toàn, cào tiếp!")
-        except Exception as e:
-            self.log_signal.emit(f"❌ [Cloudflare Bypass] Lỗi: {e}")
-
     def run(self):
         self.log_signal.emit("[Bước 2] 🚀 Tiến trình cào chi tiết chuẩn sát 3s/company khởi chạy...")
         total_db = get_mysql_companies_count()
         self.count_signal.emit(total_db)
-        
-        while self.is_running:
-            detail_urls = []
-            try:
-                conn = get_mysql_connection()
-                cursor = conn.cursor()
-                worker_id = "L_" + uuid.uuid4().hex[:8]
-                cursor.execute("UPDATE crawler_urls SET status = %s WHERE status = 'PENDING' AND url REGEXP '/[0-9]{10}' LIMIT 10", (worker_id,))
-                cursor.execute("SELECT url FROM crawler_urls WHERE status = %s", (worker_id,))
-                detail_urls = [row[0] for row in cursor.fetchall()]
-                
-                # CẬP NHẬT NGAY trạng thái về 'VISITED' để các lượt lặp sau không lấy trùng
-                if detail_urls:
-                    cursor.executemany("UPDATE crawler_urls SET status = 'VISITED' WHERE url = %s", [(u,) for u in detail_urls])
-                
-                cursor.close()
-                conn.close()
-            except Exception as e:
-                self.log_signal.emit(f"⚠️ Lỗi truy vấn URL cào chi tiết: {e}")
-                time.sleep(2)
-                continue
 
-            if not detail_urls:
-                self.log_signal.emit("⏳ [Bước 2] Hết link doanh nghiệp PENDING. Đang quét tự động các DN thiếu thông tin...")
-                requeued = requeue_incomplete_companies_in_mysql()
-                if requeued > 0:
-                    self.log_signal.emit(f"🔄 [Bước 2] Đã tự động đưa {requeued:,} URL doanh nghiệp thiếu thông tin về PENDING để cào lại!")
-                    time.sleep(1.0)
-                    continue
-                else:
-                    self.log_signal.emit("⏳ [Bước 2] Đang chờ thêm link doanh nghiệp mới từ Nhện Săn Link...")
-                    time.sleep(2.0)
-                    continue
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(channel="msedge", headless=False, args=["--disable-blink-features=AutomationControlled", "--no-first-run"])
+                context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edge/122.0.0.0")
+                page = context.new_page()
 
-            for target_url in detail_urls:
-                if not self.is_running:
-                    break
-                
-                norm_target = normalize(target_url)
-                self.log_signal.emit(f"🏢 [ĐANG CÀO CHI TIẾT DN] {norm_target}")
-                
-                success = False
-                while self.is_running and not success:
-                    content = fetch_url_content_safe(norm_target, self.log_signal)
-                    
-                    if content and len(content) > 500:
-                        try:
-                            soup = BeautifulSoup(content, "lxml")
+                while self.is_running:
+                    detail_urls = []
+                    try:
+                        conn = get_mysql_connection()
+                        cursor = conn.cursor()
+                        worker_id = "L_" + uuid.uuid4().hex[:8]
+                        cursor.execute("UPDATE crawler_urls SET status = %s WHERE status = 'PENDING' AND url REGEXP '/[0-9]{10}' LIMIT 10", (worker_id,))
+                        cursor.execute("SELECT url FROM crawler_urls WHERE status = %s", (worker_id,))
+                        detail_urls = [row[0] for row in cursor.fetchall()]
+                        
+                        if detail_urls:
+                            cursor.executemany("UPDATE crawler_urls SET status = 'VISITED' WHERE url = %s", [(u,) for u in detail_urls])
+                        
+                        cursor.close()
+                        conn.close()
+                    except Exception as e:
+                        self.log_signal.emit(f"⚠️ Lỗi truy vấn URL cào chi tiết: {e}")
+                        time.sleep(2)
+                        continue
+
+                    if not detail_urls:
+                        self.log_signal.emit("⏳ [Bước 2] Hết link doanh nghiệp PENDING. Đang quét tự động các DN thiếu thông tin...")
+                        requeued = requeue_incomplete_companies_in_mysql()
+                        if requeued > 0:
+                            self.log_signal.emit(f"🔄 [Bước 2] Đã tự động đưa {requeued:,} URL doanh nghiệp thiếu thông tin về PENDING để cào lại!")
+                            time.sleep(1.0)
+                            continue
+                        else:
+                            self.log_signal.emit("⏳ [Bước 2] Đang chờ thêm link doanh nghiệp mới từ Nhện Săn Link...")
+                            time.sleep(2.0)
+                            continue
+
+                    for target_url in detail_urls:
+                        if not self.is_running:
+                            break
+                        
+                        norm_target = normalize(target_url)
+                        self.log_signal.emit(f"🏢 [ĐANG CÀO CHI TIẾT DN] {norm_target}")
+                        
+                        success = False
+                        while self.is_running and not success:
+                            try:
+                                page.goto(norm_target, timeout=30000)
+                                content = page.content()
+                                if "Just a moment..." in content:
+                                    self.log_signal.emit("⏳ Phát hiện Cloudflare, đang chờ 15s để tự vượt...")
+                                    time.sleep(15)
+                                    content = page.content()
+                            except Exception as e:
+                                self.log_signal.emit(f"⚠️ Lỗi truy cập {norm_target}: {e}")
+                                content = None
                             
-                            mst_match = re.search(r'/(\d{10})', norm_target)
-                            mst = mst_match.group(1) if mst_match else "Không có"
-                            
-                            h1 = soup.find("h1")
-                            company_name = re.sub(r'^\d+\s*-\s*', '', h1.get_text(strip=True)) if h1 else "Không có"
+                            if content and len(content) > 500:
+                                try:
+                                    soup = BeautifulSoup(content, "lxml")
+                                    
+                                    mst_match = re.search(r'/(\d{10})', norm_target)
+                                    mst = mst_match.group(1) if mst_match else "Không có"
+                                    
+                                    h1 = soup.find("h1")
+                                    company_name = re.sub(r'^\d+\s*-\s*', '', h1.get_text(strip=True)) if h1 else "Không có"
 
-                            def get_val(label):
-                                td = soup.find(lambda tag: tag.name == "td" and label in tag.text)
-                                if td and td.find_next_sibling("td"):
-                                    for b in td.find_next_sibling("td").find_all("button"): b.decompose()
-                                    return re.sub(r"\s+", " ", td.find_next_sibling("td").get_text(separator=" ")).strip()
-                                return "Không có"
+                                    def get_val(label):
+                                        td = soup.find(lambda tag: tag.name == "td" and label in tag.text)
+                                        if td and td.find_next_sibling("td"):
+                                            for b in td.find_next_sibling("td").find_all("button"): b.decompose()
+                                            return re.sub(r"\s+", " ", td.find_next_sibling("td").get_text(separator=" ")).strip()
+                                        return "Không có"
 
-                            business_lines_list = []
-                            table_nganh = soup.find("table", {"id": "orther_dl"}) or soup.find("table", class_="table")
-                            if table_nganh:
-                                for row in table_nganh.find_all("tr"):
-                                    cols = row.find_all("td")
-                                    if len(cols) >= 2:
-                                        code = cols[0].get_text(strip=True)
-                                        name = cols[1].get_text(strip=True)
-                                        if code and name:
-                                            business_lines_list.append(f"{code} - {name}")
-                            
-                            business_lines_text = "\n".join(business_lines_list) if business_lines_list else "Không có"
-                            main_ind = get_val("Ngành nghề chính")
+                                    business_lines_list = []
+                                    table_nganh = soup.find("table", {"id": "orther_dl"}) or soup.find("table", class_="table")
+                                    if table_nganh:
+                                        for row in table_nganh.find_all("tr"):
+                                            cols = row.find_all("td")
+                                            if len(cols) >= 2:
+                                                code = cols[0].get_text(strip=True)
+                                                name = cols[1].get_text(strip=True)
+                                                if code and name:
+                                                    business_lines_list.append(f"{code} - {name}")
+                                    
+                                    business_lines_text = "\n".join(business_lines_list) if business_lines_list else "Không có"
+                                    main_ind = get_val("Ngành nghề chính")
 
-                            company_data = (
-                                mst, company_name, get_val("Địa chỉ Thuế"), get_val("Địa chỉ"), 
-                                get_val("Tình trạng"), get_val("Tên viết tắt"), get_val("Người đại diện"), 
-                                get_val("Điện thoại"), get_val("Ngày hoạt động"), get_val("Quản lý bởi"), 
-                                get_val("Loại hình DN"), main_ind, business_lines_text
-                            )
+                                    company_data = (
+                                        mst, company_name, get_val("Địa chỉ Thuế"), get_val("Địa chỉ"), 
+                                        get_val("Tình trạng"), get_val("Tên viết tắt"), get_val("Người đại diện"), 
+                                        get_val("Điện thoại"), get_val("Ngày hoạt động"), get_val("Quản lý bởi"), 
+                                        get_val("Loại hình DN"), main_ind, business_lines_text
+                                    )
 
-                            self.writer_thread.queue.put({
-                                'data': company_data,
-                                'url': norm_target,
-                                'mst': mst,
-                                'name': company_name
-                            })
-                            self.crawled_count += 1
-                            success = True
-                            if self.crawled_count >= 5:
-                                self.bypass_cloudflare()
-                                self.crawled_count = 0
+                                    self.writer_thread.queue.put({
+                                        'data': company_data,
+                                        'url': norm_target,
+                                        'mst': mst,
+                                        'name': company_name
+                                    })
+                                    self.crawled_count += 1
+                                    success = True
+                                    if self.crawled_count >= 5:
+                                        self.crawled_count = 0
 
-                        except Exception as ex:
-                            self.log_signal.emit(f"❌ Lỗi xử lý cào URL {norm_target}: {ex}")
-                            save_url_to_mysql(norm_target, "CRAWLED")
-                            success = True
-                    else:
-                        self.log_signal.emit(f"⚠️ Phát hiện bị chặn tại {norm_target}. Trả về PENDING và mở Bypass thử lại ngay...")
-                        save_url_to_mysql(norm_target, "PENDING")
-                        self.bypass_cloudflare()
-                        time.sleep(1.0)
+                                except Exception as ex:
+                                    self.log_signal.emit(f"❌ Lỗi xử lý cào URL {norm_target}: {ex}")
+                                    save_url_to_mysql(norm_target, "CRAWLED")
+                                    success = True
+                            else:
+                                self.log_signal.emit(f"⚠️ Phát hiện bị chặn tại {norm_target}. Trả về PENDING và mở Bypass thử lại ngay...")
+                                save_url_to_mysql(norm_target, "PENDING")
+                                time.sleep(1.0)
 
-                if success:
-                    time.sleep(3.0)
+                        if success:
+                            time.sleep(3.0)
+
+        except Exception as e:
+            self.log_signal.emit(f"❌ Lỗi Playwright: {e}")
 
     def stop(self): self.is_running = False
-
-# ==========================================
 # CLOUDFLARE VERIFIER
 # ==========================================
 class CloudflareVerifierThread(QThread):
