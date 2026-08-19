@@ -765,63 +765,63 @@ class Step2LiveCrawlerWorker(QThread):
                     
                     if content and len(content) > 500:
                         try:
-                        soup = BeautifulSoup(content, "lxml")
-                        
-                        mst_match = re.search(r'/(\d{10})', norm_target)
-                        mst = mst_match.group(1) if mst_match else "Không có"
-                        
-                        h1 = soup.find("h1")
-                        company_name = re.sub(r'^\d+\s*-\s*', '', h1.get_text(strip=True)) if h1 else "Không có"
+                            soup = BeautifulSoup(content, "lxml")
+                            
+                            mst_match = re.search(r'/(\d{10})', norm_target)
+                            mst = mst_match.group(1) if mst_match else "Không có"
+                            
+                            h1 = soup.find("h1")
+                            company_name = re.sub(r'^\d+\s*-\s*', '', h1.get_text(strip=True)) if h1 else "Không có"
 
-                        def get_val(label):
-                            td = soup.find(lambda tag: tag.name == "td" and label in tag.text)
-                            if td and td.find_next_sibling("td"):
-                                for b in td.find_next_sibling("td").find_all("button"): b.decompose()
-                                return re.sub(r"\s+", " ", td.find_next_sibling("td").get_text(separator=" ")).strip()
-                            return "Không có"
+                            def get_val(label):
+                                td = soup.find(lambda tag: tag.name == "td" and label in tag.text)
+                                if td and td.find_next_sibling("td"):
+                                    for b in td.find_next_sibling("td").find_all("button"): b.decompose()
+                                    return re.sub(r"\s+", " ", td.find_next_sibling("td").get_text(separator=" ")).strip()
+                                return "Không có"
 
-                        business_lines_list = []
-                        table_nganh = soup.find("table", {"id": "orther_dl"}) or soup.find("table", class_="table")
-                        if table_nganh:
-                            for row in table_nganh.find_all("tr"):
-                                cols = row.find_all("td")
-                                if len(cols) >= 2:
-                                    code = cols[0].get_text(strip=True)
-                                    name = cols[1].get_text(strip=True)
-                                    if code and name:
-                                        business_lines_list.append(f"{code} - {name}")
-                        
-                        business_lines_text = "\n".join(business_lines_list) if business_lines_list else "Không có"
-                        main_ind = get_val("Ngành nghề chính")
+                            business_lines_list = []
+                            table_nganh = soup.find("table", {"id": "orther_dl"}) or soup.find("table", class_="table")
+                            if table_nganh:
+                                for row in table_nganh.find_all("tr"):
+                                    cols = row.find_all("td")
+                                    if len(cols) >= 2:
+                                        code = cols[0].get_text(strip=True)
+                                        name = cols[1].get_text(strip=True)
+                                        if code and name:
+                                            business_lines_list.append(f"{code} - {name}")
+                            
+                            business_lines_text = "\n".join(business_lines_list) if business_lines_list else "Không có"
+                            main_ind = get_val("Ngành nghề chính")
 
-                        company_data = (
-                            mst, company_name, get_val("Địa chỉ Thuế"), get_val("Địa chỉ"), 
-                            get_val("Tình trạng"), get_val("Tên viết tắt"), get_val("Người đại diện"), 
-                            get_val("Điện thoại"), get_val("Ngày hoạt động"), get_val("Quản lý bởi"), 
-                            get_val("Loại hình DN"), main_ind, business_lines_text
-                        )
+                            company_data = (
+                                mst, company_name, get_val("Địa chỉ Thuế"), get_val("Địa chỉ"), 
+                                get_val("Tình trạng"), get_val("Tên viết tắt"), get_val("Người đại diện"), 
+                                get_val("Điện thoại"), get_val("Ngày hoạt động"), get_val("Quản lý bởi"), 
+                                get_val("Loại hình DN"), main_ind, business_lines_text
+                            )
 
-                        self.writer_thread.queue.put({
-                            'data': company_data,
-                            'url': norm_target,
-                            'mst': mst,
-                            'name': company_name
-                        })
-                        self.crawled_count += 1
-                        success = True
-                        if self.crawled_count >= 5:
-                            self.bypass_cloudflare()
-                            self.crawled_count = 0
+                            self.writer_thread.queue.put({
+                                'data': company_data,
+                                'url': norm_target,
+                                'mst': mst,
+                                'name': company_name
+                            })
+                            self.crawled_count += 1
+                            success = True
+                            if self.crawled_count >= 5:
+                                self.bypass_cloudflare()
+                                self.crawled_count = 0
 
-                    except Exception as ex:
-                        self.log_signal.emit(f"❌ Lỗi xử lý cào URL {norm_target}: {ex}")
-                        save_url_to_mysql(norm_target, "CRAWLED")
-                        success = True
-                else:
-                    self.log_signal.emit(f"⚠️ Phát hiện bị chặn tại {norm_target}. Trả về PENDING và mở Bypass thử lại ngay...")
-                    save_url_to_mysql(norm_target, "PENDING")
-                    self.bypass_cloudflare()
-                    time.sleep(1.0)
+                        except Exception as ex:
+                            self.log_signal.emit(f"❌ Lỗi xử lý cào URL {norm_target}: {ex}")
+                            save_url_to_mysql(norm_target, "CRAWLED")
+                            success = True
+                    else:
+                        self.log_signal.emit(f"⚠️ Phát hiện bị chặn tại {norm_target}. Trả về PENDING và mở Bypass thử lại ngay...")
+                        save_url_to_mysql(norm_target, "PENDING")
+                        self.bypass_cloudflare()
+                        time.sleep(1.0)
 
                 if success:
                     time.sleep(1.0)
